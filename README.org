@@ -5,7 +5,6 @@ observations
 - The library is very much work in progress and only implements the
   =fmi::observations::weather::realtime::place::multipointcoverage= that can
   only be parameterized by timestep and place-name.
-- Given these limitations, it should be trivial to extend, although the XML
-  format is quite baroque and is the most complicated thing in the process of
-  implementing new queries.
+- Given these limitations, it should be quite easy to extend.  XML format is
+  quite baroque and is the most complicated step in adding new query support.
 
