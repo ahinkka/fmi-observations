@@ -1,0 +1,11 @@
+Common Lisp library for accessing Finnish Meteorological Institute's weather
+observations
+
+- See <http://ilmatieteenlaitos.fi/latauspalvelun-beta> for API details.
+- The library is very much work in progress and only implements the
+  =fmi::observations::weather::realtime::place::multipointcoverage= query with
+  a fixed timestep and can only be parameterized by a place-name.
+- Given these limitations, it should be trivial to extend, although the XML
+  format is quite baroque and is the most complicated thing in the process of
+  implementing new queries.
+
