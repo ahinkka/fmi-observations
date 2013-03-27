@@ -32,12 +32,13 @@
        #'(lambda (node) (xpath:evaluate "string()" node))
        node-set))))
 
-(defun get-weather-data (place-name api-key)
+(defun get-weather-data (place-name api-key time-step)
   (let* ((url
 	  (format nil
-		  "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::realtime::place::multipointcoverage&place=~A&timestep=30"
+		  "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::realtime::place::multipointcoverage&place=~A&timestep=~A"
 		  api-key
-		  (drakma:url-encode place-name :utf-8)))
+		  (drakma:url-encode place-name :utf-8)
+		  time-step))
 	 (xml (drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8))
 	 (dom (string-to-dom xml)))
     (values
@@ -82,8 +83,9 @@
   (sort tuples
 	#'(lambda (x y) (local-time:timestamp< (car x) (car y)))))
 
-(defun get-weather (place-name &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9"))
-  (let* ((result (get-weather-data place-name api-key))
+(defun get-weather (place-name &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9")
+		    (time-step 30))
+  (let* ((result (get-weather-data place-name api-key time-step))
 	 (locations (car (third result)))
 	 (observations (car (fourth result))))
     (values
