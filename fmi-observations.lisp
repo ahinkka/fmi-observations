@@ -88,7 +88,7 @@
   (let* ((result (get-weather-data place-name api-key time-step))
 	 (locations (car (third result)))
 	 (observations (car (fourth result))))
-    (values
+    (list
      (car (first result))
      (car (second result))
      (sort-temperature-tuples
