@@ -34,24 +34,17 @@
 
 (defun get-weather-data (place-name api-key time-step)
   (let* ((url
-	  (format nil
-		  "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::realtime::place::multipointcoverage&place=~A&timestep=~A"
-		  api-key
-		  (drakma:url-encode place-name :utf-8)
-		  time-step))
-	 (xml (drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8))
+	  (format nil "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::realtime::place::multipointcoverage&place=~A&timestep=~A"
+		  api-key (drakma:url-encode place-name :utf-8) time-step))
+	 (xml (drakma:http-request url
+				   :external-format-out :utf-8
+				   :external-format-in :utf-8))
 	 (dom (string-to-dom xml)))
-    (values
-     (list
-      (extract-node-values dom
-			   "//target:region[@codeSpace='http://xml.fmi.fi/namespace/location/region']")
-      (extract-node-values dom
-			   "//gml:name[@codeSpace='http://xml.fmi.fi/namespace/locationcode/name']")
-      (extract-node-values dom
-			   "//gmlcov:positions")
-      (extract-node-values dom
-			   "//gml:doubleOrNilReasonTupleList"))
-     url)))
+    (list
+     (extract-node-values dom "//target:region[@codeSpace='http://xml.fmi.fi/namespace/location/region']")
+     (extract-node-values dom "//gml:name[@codeSpace='http://xml.fmi.fi/namespace/locationcode/name']")
+     (extract-node-values dom "//gmlcov:positions")
+     (extract-node-values dom "//gml:doubleOrNilReasonTupleList"))))
 
 (defun weather-string-to-list (string)
   (remove-if
