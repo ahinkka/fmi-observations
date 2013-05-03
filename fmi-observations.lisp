@@ -14,8 +14,25 @@
 
 (defpackage #:fmi-observations
   (:use #:common-lisp)
-  (:export :get-weather
-	   :get-station-observations
+  (:export :observations
+	   :station-observations
+
+	   :observation-time
+	   :station-region
+	   :station-location
+	   :temperature
+	   :windspeed
+	   :wind-gusts
+	   :wind-direction
+	   :rh
+	   :td
+	   :r-1h
+	   :ri-10min
+	   :snow-aws
+	   :p-sea
+	   :n-man
+	   :visibility
+
 	   :*location-to-fmisid*))
 
 (in-package :fmi-observations)
@@ -104,11 +121,102 @@
     ((60.3867 22.5547) "100934") ((60.2581 20.7506) "100928")
     ((60.1116 21.7027) "100924")))
 
+
+(defclass weather-observation ()
+  ((name :accessor observation-time
+         :initform (error "observation-time is required!")
+         :initarg :observation-time)
+
+   (station-region :accessor station-region :initarg :station-region)
+   (station-location :accessor station-location :initarg :station-location)
+
+   (temperature    :accessor temperature    :initarg :t2m)
+   (windspeed      :accessor windspeed      :initarg :ws-10min)
+   (wind-gusts     :accessor wind-gusts     :initarg :wg-10min)
+   (wind-direction :accessor wind-direction :initarg :wd-10min)
+   (rh             :accessor rh             :initarg :rh)
+   (td             :accessor td             :initarg :td)
+   (r-1h           :accessor r-1h           :initarg :r-1h)
+   (ri-10min       :accessor ri-10min       :initarg :ri-10min)
+   (snow-aws       :accessor snow-aws       :initarg :snow-aws)
+   (p-sea          :accessor p-sea          :initarg :p-sea)
+   (n-man          :accessor n-man          :initarg :n-man)
+   (visibility     :accessor visibility     :initarg :vis)
+   ))
+
+(defmethod print-object ((object weather-observation) stream)
+  (print-unreadable-object (object stream :type t)
+    (format stream "~a" (observation-time object))))
+
+;;;
+;;; Utility functions
+;;;
 (defun string-to-dom (string)
   (cxml:parse-octets
    (babel:string-to-octets string)
    (cxml-dom:make-dom-builder)))
 
+(defun string-empty-p (string)
+  (= 0 (length string)))
+
+(defun string-trim-spaces (string)
+  (string-trim " " string))
+
+(defun string-to-lines (string)
+  "Splits argument string to a list of non-empty lines, ends trimmed."
+  (remove-if #'string-empty-p
+	     (mapcar #'string-trim-spaces
+		     (cl-ppcre:split "\\n" string))))
+
+(defun line-to-parts (line)
+  (remove-if #'string-empty-p
+	     (mapcar #'string-trim-spaces
+		     (cl-ppcre:split " " line))))
+
+(defun error-ignoring-parse-number (input)
+  (if (string= input "NaN")
+      '|NaN|
+      (parse-number:parse-number input)))
+
+(defun line-to-number-parts (line)
+  (mapcar #'error-ignoring-parse-number
+	  (remove-if #'string-empty-p
+		     (mapcar #'string-trim-spaces
+			     (cl-ppcre:split " " line)))))
+
+(defun symbol-position (list symbol)
+  "Wrapper around POSITION that normalizes inputs to lowercase dash-separated form.
+   Also works with strings as members of either parameter.
+
+   For example:
+     (symbol-position '(a b c d e_f) 'e-f) => 4"
+  (flet ((format-lowercase (input)
+	   (format nil "~(~a~)" input))
+	 (normalize-delimiters (input)
+	   (substitute #\- #\_ input)))
+    (let ((string-list (mapcar (alexandria:compose #'normalize-delimiters #'format-lowercase) list))
+	  (symbol-string (normalize-delimiters (format-lowercase symbol))))
+      (position symbol-string string-list :test #'string=))))
+
+(defun make-keyword (keyword-name)
+  (alexandria:make-keyword (substitute #\- #\_ (string-upcase keyword-name))))
+
+(defmacro ordered-list-key-lookup-helper (key key-list value-list)
+  "(ordered-list-key-lookup-helper 'e-f '(a b c d e_f) '(1 2 3 4 5)) => (:E-F 5)"
+  `(list
+    (make-keyword ,key)
+    (elt ,value-list (symbol-position ,key-list ,key))))
+
+
+;;;
+;;; Domain
+;;;
+(defun observation-fields (dom)
+  (let (result)
+    (xpath:with-namespaces (("swe" "http://www.opengis.net/swe/2.0"))
+      (xpath:do-node-set (node (xpath:evaluate "//swe:DataRecord/swe:field" dom))
+	(push (format nil "~A" (xpath:evaluate "string(@name)" node)) result)))
+    (reverse result)))
 
 (defun extract-node-values (dom xpath-expression)
   (xpath:with-namespaces (("gml" "http://www.opengis.net/gml/3.2")
@@ -136,59 +244,68 @@
      (extract-node-values dom "//target:region[@codeSpace='http://xml.fmi.fi/namespace/location/region']")
      (extract-node-values dom "//gml:name[@codeSpace='http://xml.fmi.fi/namespace/locationcode/name']")
      (extract-node-values dom "//gmlcov:positions")
-     (extract-node-values dom "//gml:doubleOrNilReasonTupleList"))))
+     (extract-node-values dom "//gml:doubleOrNilReasonTupleList")
+     (observation-fields dom))))
 
-(defun weather-string-to-list (string)
-  (remove-if
-   #'(lambda (line) (= 0 (length line)))
-   (mapcar #'(lambda (line)
-	       (string-trim " " line))
-	   (cl-ppcre:split "\\n" string))))
+(defun collect-observations (station-region station-location locations observations attributes)
+  (let ((locations-list (mapcar #'line-to-parts (string-to-lines locations)))
+	(observations-list (mapcar #'line-to-number-parts (string-to-lines observations))))
 
-(defun item-from-weather-string (string position-function)
-  (mapcar #'(lambda (line)
-	      (funcall position-function (remove-if #'(lambda (item) (= 0 (length item)))
-							 (cl-ppcre:split " " line))))
-	  (weather-string-to-list string)))
+    (loop
+       for location in locations-list
+       for observation in observations-list
+       collecting
+	 (flet
+	     ((make-observation (time attributes)
+		(apply #'make-instance
+		       (concatenate 'list
+				    (list 'weather-observation
+					  :observation-time time
+					  :station-region station-region
+					  :station-location station-location)
+				    attributes))))
+	   (let ((attributes-applicable
+		  (alexandria:flatten
+		   (mapcar #'(lambda (attribute)
+			       (ordered-list-key-lookup-helper attribute attributes observation))
+			   attributes))))
 
-(defun temperature-tuples (weather-positions weather-observations)
-  (mapcar #'list
-	  (item-from-weather-string weather-positions
-				    #'(lambda (item) (local-time:unix-to-timestamp
-						      (parse-integer (car (last item))))))
-	  (item-from-weather-string weather-observations
-				    #'(lambda (item) 
-					(handler-case 
-					    (parse-number:parse-number (first item))
-					  (sb-int:simple-parse-error (s-p-e)
-					    (declare (ignore s-p-e))
-					    nil))))))
+	     (make-observation (local-time:unix-to-timestamp
+				(parse-integer (car (last  location)))) attributes-applicable))))))
 
-(defun sort-temperature-tuples (tuples)
-  (sort tuples
-	#'(lambda (x y) (local-time:timestamp< (car x) (car y)))))
+(defun weather-observation-temporal-comparator (x y)
+  (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun get-station-observations (station-fmisid
-				 &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9") (time-step 30))
+(defun station-observations (station-fmisid
+			     &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9") (time-step 30))
+
   (let* ((result (get-weather-data :station-fmisid station-fmisid :api-key api-key :time-step time-step))
+	 (station-region (car (first result)))
+	 (station-location (car (second result)))
 	 (locations (car (third result)))
-	 (observations (car (fourth result))))
-    (list
-     (car (first result))
-     (car (second result))
-     (sort-temperature-tuples
-      (temperature-tuples
-       locations observations)))))
+	 (observations (car (fourth result)))
+	 (attributes (fifth result)))
+    (values
+     (sort
+      (collect-observations station-region station-location
+			    locations observations attributes)
+      #'weather-observation-temporal-comparator)
+     station-region
+     station-location)))
 
-
-(defun get-weather (place-name &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9")
+(defun observations (place-name &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9")
 		    (time-step 30))
   (let* ((result (get-weather-data :place-name place-name :api-key api-key :time-step time-step))
+	 (station-region (car (first result)))
+	 (station-location (car (second result)))
 	 (locations (car (third result)))
-	 (observations (car (fourth result))))
-    (list
-     (car (first result))
-     (car (second result))
-     (sort-temperature-tuples
-      (temperature-tuples
-       locations observations)))))
+	 (observations (car (fourth result)))
+	 (attributes (fifth result)))
+    (values
+     (sort
+      (collect-observations station-region station-location
+			    locations observations attributes)
+      #'weather-observation-temporal-comparator)
+     station-region
+     station-location)))
+    
