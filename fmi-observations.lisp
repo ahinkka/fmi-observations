@@ -123,9 +123,9 @@
 
 
 (defclass weather-observation ()
-  ((name :accessor observation-time
-         :initform (error "observation-time is required!")
-         :initarg :observation-time)
+  ((observation-time :accessor observation-time
+		     :initform (error "observation-time is required!")
+		     :initarg :observation-time)
 
    (station-region :accessor station-region :initarg :station-region)
    (station-location :accessor station-location :initarg :station-location)
@@ -184,29 +184,8 @@
 		     (mapcar #'string-trim-spaces
 			     (cl-ppcre:split " " line)))))
 
-(defun symbol-position (list symbol)
-  "Wrapper around POSITION that normalizes inputs to lowercase dash-separated form.
-   Also works with strings as members of either parameter.
-
-   For example:
-     (symbol-position '(a b c d e_f) 'e-f) => 4"
-  (flet ((format-lowercase (input)
-	   (format nil "~(~a~)" input))
-	 (normalize-delimiters (input)
-	   (substitute #\- #\_ input)))
-    (let ((string-list (mapcar (alexandria:compose #'normalize-delimiters #'format-lowercase) list))
-	  (symbol-string (normalize-delimiters (format-lowercase symbol))))
-      (position symbol-string string-list :test #'string=))))
-
 (defun make-keyword (keyword-name)
   (alexandria:make-keyword (substitute #\- #\_ (string-upcase keyword-name))))
-
-(defmacro ordered-list-key-lookup-helper (key key-list value-list)
-  "(ordered-list-key-lookup-helper 'e-f '(a b c d e_f) '(1 2 3 4 5)) => (:E-F 5)"
-  `(list
-    (make-keyword ,key)
-    (elt ,value-list (symbol-position ,key-list ,key))))
-
 
 ;;;
 ;;; Domain
@@ -249,29 +228,25 @@
 
 (defun collect-observations (station-region station-location locations observations attributes)
   (let ((locations-list (mapcar #'line-to-parts (string-to-lines locations)))
-	(observations-list (mapcar #'line-to-number-parts (string-to-lines observations))))
+	(observations-list (mapcar #'line-to-number-parts (string-to-lines observations)))
+	(keyword-attributes (mapcar #'make-keyword attributes)))
 
     (loop
        for location in locations-list
        for observation in observations-list
        collecting
 	 (flet
-	     ((make-observation (time attributes)
-		(apply #'make-instance
-		       (concatenate 'list
-				    (list 'weather-observation
-					  :observation-time time
-					  :station-region station-region
-					  :station-location station-location)
-				    attributes))))
-	   (let ((attributes-applicable
-		  (alexandria:flatten
-		   (mapcar #'(lambda (attribute)
-			       (ordered-list-key-lookup-helper attribute attributes observation))
-			   attributes))))
+	     ((make-observation (time station-region station-location attributes values)
+		(let*
+		    ((beginning (list 'weather-observation :observation-time time
+				      :station-region station-region :station-location station-location))
+		     (end (apply #'concatenate 'list (mapcar #'list attributes values)))
+		     (args (concatenate 'list beginning end)))
+		  (apply #'make-instance args))))
 
-	     (make-observation (local-time:unix-to-timestamp
-				(parse-integer (car (last  location)))) attributes-applicable))))))
+	   (make-observation (local-time:unix-to-timestamp (parse-integer (car (last  location))))
+			     station-region station-location
+			     keyword-attributes observation)))))
 
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
@@ -308,4 +283,3 @@
       #'weather-observation-temporal-comparator)
      station-region
      station-location)))
-    
