@@ -173,17 +173,9 @@
 	     (mapcar #'string-trim-spaces
 		     (cl-ppcre:split " " line))))
 
-;; Lifted from <https://github.com/akapav/js/blob/master/js.lisp>
-#+sbcl
-(progn
-  (defun make-nan-helper (x) ;; It's not so easy to get a NaN value on SBCL
-    (sb-int:with-float-traps-masked (:overflow :invalid :divide-by-zero)
-      (- x sb-ext:double-float-positive-infinity)))
-  (defparameter *nan* (make-nan-helper sb-ext:double-float-positive-infinity)))
-
 (defun error-ignoring-parse-number (input)
   (if (string= input "NaN")
-      *nan*
+      nil
       (parse-number:parse-number input)))
 
 (defun line-to-number-parts (line)
