@@ -17,6 +17,8 @@
   (:export :observations
 	   :station-observations
 
+	   :*api-key*
+
 	   :observation-time
 	   :station-region
 	   :station-location
@@ -35,7 +37,9 @@
 
 	   :*location-to-fmisid*))
 
-(in-package :fmi-observations)
+(in-package #:fmi-observations)
+
+(defvar *api-key* nil)
 
 (defvar *location-to-fmisid*
   '(((61.5358 28.1919) "150168") ((69.0714 27.4964) "129963")
@@ -251,9 +255,9 @@
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun station-observations (station-fmisid
-			     &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9") (time-step 30))
-
+(defun station-observations (station-fmisid &key (api-key *api-key*) (time-step 30))
+  (when (eq nil api-key)
+    (error "API-key required!"))
   (let* ((result (get-weather-data :station-fmisid station-fmisid :api-key api-key :time-step time-step))
 	 (station-region (car (first result)))
 	 (station-location (car (second result)))
@@ -268,8 +272,9 @@
      station-region
      station-location)))
 
-(defun observations (place-name &key (api-key "b37f3e99-cdb8-4858-b850-bfffea6542f9")
-		    (time-step 30))
+(defun observations (place-name &key (api-key *api-key*) (time-step 30))
+  (when (eq nil api-key)
+    (error "API-key required!"))
   (let* ((result (get-weather-data :place-name place-name :api-key api-key :time-step time-step))
 	 (station-region (car (first result)))
 	 (station-location (car (second result)))
