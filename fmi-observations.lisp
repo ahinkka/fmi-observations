@@ -13,31 +13,34 @@
 ;;;; OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 (defpackage #:fmi-observations
-  (:use #:common-lisp)
+  (:use #:common-lisp #:iterate)
   (:export :observations
-	   :station-observations
-
 	   :*api-key*
 
 	   :observation-time
 	   :station-region
 	   :station-location
+
 	   :temperature
 	   :windspeed
 	   :wind-gusts
 	   :wind-direction
-	   :rh
-	   :td
-	   :r-1h
-	   :ri-10min
+	   :relative-humidity
+	   :dew-point
+	   :rain-1h
+	   :rain-10min
 	   :snow-aws
-	   :p-sea
+	   :pressure-sealevel
 	   :n-man
 	   :visibility
 
 	   :*location-to-fmisid*))
 
 (in-package #:fmi-observations)
+
+;; local-time's rfc3339 without nsecs
+(defvar +fmi-iso-format+
+  '((:YEAR 4) #\- (:MONTH 2) #\- (:DAY 2) #\T (:HOUR 2) #\: (:MIN 2) #\: (:SEC 2) :GMT-OFFSET-OR-Z))
 
 (defvar *api-key* nil)
 
@@ -209,28 +212,77 @@
        #'(lambda (node) (xpath:evaluate "string()" node))
        node-set))))
 
-(defun get-weather-data (&key place-name station-fmisid api-key time-step)
-  (let* ((url
+(defun get-weather-data (&key place-name bbox station-fmisid api-key time-step time-step-count)
+  (let* ((url-body (format nil
+		    "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::multipointcoverage&projection=epsg:4326" api-key))
+	 (url
 	  (cond
-	    ((and place-name station-fmisid)
-	     (error "place-name and station-fmisid are mutually exclusive parameters"))
+	    ((not (eq nil bbox))
+	     (format nil "~A&bbox=~A,~A,~A,~A&timestep=~A&timesteps=~A"
+		     url-body
+		     (cdr (assoc :min-lon bbox))
+		     (cdr (assoc :min-lat bbox))
+		     (cdr (assoc :max-lon bbox))
+		     (cdr (assoc :max-lat bbox))
+		     time-step time-step-count))
 	    ((not (eq nil place-name))
-	     (format nil "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::multipointcoverage&place=~A&timestep=~A"
-		      api-key (drakma:url-encode place-name :utf-8) time-step))
+	     (format nil "~A&place=~A&timestep=~A&timesteps=~A"
+		     url-body
+		     (drakma:url-encode place-name :utf-8)
+		     time-step time-step-count))
 	    ((not (eq nil station-fmisid))
-	     (format nil "http://data.fmi.fi/fmi-apikey/~A/wfs?request=getFeature&storedquery_id=fmi::observations::weather::multipointcoverage&fmisid=~A&timestep=~A"
-		      api-key (drakma:url-encode station-fmisid :utf-8) time-step))))
-	    (xml (drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8))
-	    (dom (string-to-dom xml)))
-    (list
-     (extract-node-values dom "//target:region[@codeSpace='http://xml.fmi.fi/namespace/location/region']")
-     (extract-node-values dom "//gml:name[@codeSpace='http://xml.fmi.fi/namespace/locationcode/name']")
-     (extract-node-values dom "//gmlcov:positions")
-     (extract-node-values dom "//gml:doubleOrNilReasonTupleList")
-     (observation-fields dom))))
+	     (format nil "~A&fmisid=~A&timestep=~A&timesteps=~A"
+		     url-body
+		     (drakma:url-encode station-fmisid :utf-8)
+		     time-step time-step-count))))
+	 (xml (drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8))
+	 (dom (string-to-dom xml)))
 
-(defun collect-observations (station-region station-location locations observations attributes)
-  (let ((locations-list (mapcar #'line-to-parts (string-to-lines locations)))
+    (multiple-value-bind (location-to-id id-to-station)
+	(location-to-place-caches dom)
+      (list
+       location-to-id
+       id-to-station
+       (extract-node-values dom "//gmlcov:positions")
+       (extract-node-values dom "//gml:doubleOrNilReasonTupleList")
+       (observation-fields dom)
+       url))))
+
+(defun location-to-place-caches (dom)
+  (flet
+      ((trim-point-prefix (s) (string-trim "point-" s))
+       (trim-spaces (s) (string-trim " " s)))
+
+    (let*
+	((station-alist
+	  (mapcar #'list
+		  (extract-node-values dom "//gml:identifier[@codeSpace='http://xml.fmi.fi/namespace/stationcode/fmisid']")
+		  (extract-node-values dom "//target:region[@codeSpace='http://xml.fmi.fi/namespace/location/region']")
+		  (extract-node-values dom "//gml:name[@codeSpace='http://xml.fmi.fi/namespace/locationcode/name']")))
+
+	 (id-to-station (make-hash-table :test 'equal :size (length station-alist)))
+
+	 (locations-alist
+	  (mapcar #'cons
+		  (mapcar #'trim-point-prefix
+			  (extract-node-values dom "//gml:Point[@srsName='http://www.opengis.net/def/crs/EPSG/0/4258']/@gml:id"))
+		  (mapcar #'trim-spaces
+			  (extract-node-values
+			   dom "//gml:Point[@srsName='http://www.opengis.net/def/crs/EPSG/0/4258']/gml:pos"))))
+	 (location-to-id (make-hash-table :test 'equal :size (length locations-alist))))
+
+      (iter (for pair in station-alist)
+	    (setf (gethash (car pair) id-to-station) (cdr pair)))
+      
+      (iter (for pair in locations-alist)
+	    (setf (gethash (cdr pair) location-to-id) (car pair)))
+
+      (values
+       location-to-id
+       id-to-station))))
+
+(defun collect-observations (location-to-id id-to-station locations-and-times observations attributes)
+  (let ((locations-list (mapcar #'line-to-parts (string-to-lines locations-and-times)))
 	(observations-list (mapcar #'line-to-number-parts (string-to-lines observations)))
 	(keyword-attributes (mapcar #'make-keyword attributes)))
 
@@ -239,51 +291,45 @@
        for observation in observations-list
        collecting
 	 (flet
-	     ((make-observation (time station-region station-location attributes values)
+	     ((make-observation (time region-name location-name attributes values)
 		(let*
 		    ((beginning (list 'weather-observation :observation-time time
-				      :station-region station-region :station-location station-location))
+				      :station-region region-name :station-location location-name))
 		     (end (apply #'concatenate 'list (mapcar #'list attributes values)))
 		     (args (concatenate 'list beginning end)))
 		  (apply #'make-instance args))))
 
-	   (make-observation (local-time:unix-to-timestamp (parse-integer (car (last  location))))
-			     station-region station-location
-			     keyword-attributes observation)))))
+	   (destructuring-bind (region place)
+	       (gethash (gethash (format nil "~A ~A" (car location) (cadr location)) location-to-id) id-to-station)
+
+	     (make-observation (local-time:unix-to-timestamp (parse-integer (car (last location))))
+			       region place
+			       keyword-attributes observation))))))
 
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun station-observations (station-fmisid &key (api-key *api-key*) (time-step 30))
-  (when (eq nil api-key)
-    (error "API-key required!"))
-  (let* ((result (get-weather-data :station-fmisid station-fmisid :api-key api-key :time-step time-step))
-	 (station-region (car (first result)))
-	 (station-location (car (second result)))
-	 (locations (car (third result)))
-	 (observations (car (fourth result)))
-	 (attributes (fifth result)))
-    (values
-     (sort
-      (collect-observations station-region station-location
-			    locations observations attributes)
-      #'weather-observation-temporal-comparator)
-     station-region
-     station-location)))
+(defun observations (&key place-name station-fmisid bbox
+		     (time-step 30) (time-step-count 48) (api-key *api-key*))
+  "place-name and station-fmisid as strings, bbox as alist with keys :min-lat, :min-lon, :max-lat and :max-lon.
+  Only one type of parameter should be passed."
 
-(defun observations (place-name &key (api-key *api-key*) (time-step 30))
   (when (eq nil api-key)
     (error "API-key required!"))
-  (let* ((result (get-weather-data :place-name place-name :api-key api-key :time-step time-step))
-	 (station-region (car (first result)))
-	 (station-location (car (second result)))
-	 (locations (car (third result)))
+
+  (let* ((result (get-weather-data :place-name place-name
+				   :bbox bbox
+				   :station-fmisid station-fmisid
+				   :api-key api-key :time-step time-step :time-step-count time-step-count))
+	 (location-to-id (first result))
+	 (id-to-place (second result))
+	 (locations-and-times (car (third result)))
 	 (observations (car (fourth result)))
-	 (attributes (fifth result)))
+	 (attributes (fifth result))
+	 (url (sixth result)))
     (values
      (sort
-      (collect-observations station-region station-location
-			    locations observations attributes)
+      (collect-observations location-to-id id-to-place
+    			    locations-and-times observations attributes)
       #'weather-observation-temporal-comparator)
-     station-region
-     station-location)))
+     url)))

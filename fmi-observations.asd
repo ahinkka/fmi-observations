@@ -4,5 +4,6 @@
 	       #:xpath
 	       #:parse-number
 	       #:local-time
-	       #:drakma)
+	       #:drakma
+	       #:iterate)
   :components ((:file "fmi-observations")))
