@@ -5,5 +5,9 @@
 	       #:parse-number
 	       #:local-time
 	       #:drakma
-	       #:iterate)
-  :components ((:file "fmi-observations")))
+	       #:iterate
+	       #:fare-mop)
+  :components ((:file "package")
+	       (:file "point")
+	       (:file "criteria")
+	       (:file "fmi-observations")))
