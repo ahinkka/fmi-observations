@@ -19,6 +19,7 @@
   (:use #:common-lisp #:iterate)
   (:export :observations
 	   :*api-key*
+	   :api-key-missing-error
 	   :no-stations-error
 
 	   ;; criteria makers

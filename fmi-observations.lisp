@@ -57,7 +57,9 @@
   ()
   (:documentation "Superclass for all conditions related to FMI-OBSERVATIONS."))
 
-(define-condition no-stations-error (fmi-observations-condition simple-error) ())
+(define-condition api-key-missing-error (fmi-observations-condition simple-condition) ())
+
+(define-condition no-stations-error (fmi-observations-condition simple-condition) ())
 
 
 ;;;
@@ -322,7 +324,8 @@
   (check-type time-step-count number)
 
   (when (null api-key)
-    (error "API-key required!"))
+    (error 'api-key-missing-error
+	   :format-control "API-key must be set."))
   (check-type api-key string)
 
   (let* ((result (get-weather-data station-criterion
@@ -330,7 +333,9 @@
 	 (weather-stations (first result)))
 
     (when (= (length weather-stations) 0)
-      (error 'no-stations-error "No stations found."))
+      (error 'no-stations-error
+	     :format-control "No stations for criterion ~A."
+	     :format-arguments (list station-criterion)))
 
     (let* ((locations-and-times (car (second result)))
 	   (observations (car (third result)))
