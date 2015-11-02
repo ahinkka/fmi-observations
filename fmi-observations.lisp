@@ -61,6 +61,8 @@
 
 (define-condition no-stations-error (fmi-observations-condition simple-condition) ())
 
+(define-condition remote-error (fmi-observations-condition simple-condition) ())
+
 
 ;;;
 ;;; Utility functions
@@ -69,6 +71,9 @@
   (cxml:parse-octets
    (babel:string-to-octets string)
    (cxml-dom:make-dom-builder)))
+  ;; (etypecase string
+  ;;   (string (cxml:parse-octets (babel:string-to-octets string) (cxml-dom:make-dom-builder)))
+  ;;   ((simple-array (unsigned-byte 8)) (cxml:parse-octets string (cxml-dom:make-dom-builder)))))
 
 (defun string-empty-p (string)
   (= 0 (length string)))
@@ -243,9 +248,17 @@
 (defun get-weather-data (station-criterion &key api-key time-step time-step-count)
   (let ((url (make-url api-key station-criterion time-step time-step-count)))
     ;; (break url)
-    (let ((xml (drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8)))
-      ;; (break xml)
-      (let ((dom (string-to-dom xml)))
+    (multiple-value-bind (response-body status-code headers uri stream must-close reason-phrase)
+	(drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8)
+      (declare (ignore headers uri stream must-close))
+
+      (unless (= status-code 200)
+	(error 'remote-error
+	       :format-control "Remote returned an error: ~A (~A) with body '~%'."
+	       :format-arguments (list status-code reason-phrase response-body)))
+
+      ;; (break response-body)
+      (let ((dom (string-to-dom response-body)))
 	(list
 	 (extract-stations dom)
 	 (extract-node-values dom "//gmlcov:positions")
