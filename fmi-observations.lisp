@@ -253,9 +253,13 @@
       (declare (ignore headers uri stream must-close))
 
       (unless (= status-code 200)
-	(error 'remote-error
-	       :format-control "Remote returned an error: ~A (~A) with body '~%'."
-	       :format-arguments (list status-code reason-phrase response-body)))
+	(if (search "no locations found for place" response-body)
+	    (error 'no-stations-error
+		   :format-control "No stations for criterion ~A."
+		   :format-arguments (list station-criterion))
+	    (error 'remote-error
+		   :format-control "Remote returned an error: ~A (~A) with body '~%'."
+		   :format-arguments (list status-code reason-phrase response-body))))
 
       ;; (break response-body)
       (let ((dom (string-to-dom response-body)))

@@ -21,6 +21,7 @@
 	   :*api-key*
 	   :api-key-missing-error
 	   :no-stations-error
+	   :remote-error
 
 	   ;; criteria makers
 	   :make-bbox-criterion
