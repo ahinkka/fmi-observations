@@ -57,11 +57,11 @@
   ()
   (:documentation "Superclass for all conditions related to FMI-OBSERVATIONS."))
 
-(define-condition api-key-missing-error (fmi-observations-condition simple-condition) ())
+(define-condition api-key-missing-error (fmi-observations-condition error) ())
 
-(define-condition no-stations-error (fmi-observations-condition simple-condition) ())
+(define-condition no-stations-error (fmi-observations-condition error) ())
 
-(define-condition remote-error (fmi-observations-condition simple-condition) ())
+(define-condition remote-error (fmi-observations-condition error) ())
 
 
 ;;;
