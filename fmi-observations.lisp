@@ -57,11 +57,21 @@
   ()
   (:documentation "Superclass for all conditions related to FMI-OBSERVATIONS."))
 
-(define-condition api-key-missing-error (fmi-observations-condition error) ())
+(define-condition http-request-condition (fmi-observations-condition error)
+  ((status-code :initarg :status-code :initform (error "HTTP status must be defined.")
+		:reader status-code)
+   (response-body :initarg :response-body :initform nil	:reader response-body)
+   (reason :initarg :reason :initform nil :reader reason))
+  (:report (lambda (condition stream)
+	     (format stream
+		     "Received HTTP response with status code ~A. Reason: ~A"
+		     (status-code condition) (reason condition)))))
 
-(define-condition no-stations-error (fmi-observations-condition error) ())
+(define-condition remote-error (http-request-condition) ())
 
-(define-condition remote-error (fmi-observations-condition error) ())
+(define-condition station-not-found-error (remote-error) ())
+
+(define-condition no-observations-for-station-error (fmi-observations-condition error) ())
 
 
 ;;;
@@ -121,14 +131,11 @@
 
 
 ;;;
-;;; API-key can be stored here so that it doesn't have to be passed in every
-;;; time.
-;;;
-(defvar *api-key* nil)
-
-;;;
 ;;; Domain
 ;;;
+(defparameter *observations-multipointcoverage-url*
+	      "http://opendata.fmi.fi/wfs?request=getFeature&storedquery_id=fmi::observations::weather::multipointcoverage&projection=epsg:4326")
+
 (defun extract-locations (dom)
   (let ((node-set
 	 (xpath:with-namespaces (("om" "http://www.opengis.net/om/2.0")
@@ -215,14 +222,6 @@
        #'(lambda (node) (xpath:evaluate "string()" node))
        node-set))))
 
-(defun make-base-url (api-key)
-  (format nil
-	  "http://data.fmi.fi/fmi-apikey/~A/wfs~
-             ?request=getFeature~
-             &storedquery_id=fmi::observations::weather::multipointcoverage~
-             &projection=epsg:4326"
-	  api-key))
-
 (defmethod criterion-as-get-parameter ((object place-name-criterion))
   (format nil "place=~A" (drakma:url-encode (place-name object) :utf-8)))
 
@@ -238,15 +237,15 @@
 (defmethod criterion-as-get-parameter ((object fmi-station-id-criterion))
   (format nil "fmisid=~A" (drakma:url-encode (station-id object) :utf-8)))
 
-(defun make-url (api-key criterion time-step time-step-count)
+(defun make-url (criterion time-step time-step-count)
   (format nil "~A&~A&timestep=~A&timesteps=~A"
-	  (make-base-url api-key)
+	  *observations-multipointcoverage-url*
 	  (criterion-as-get-parameter criterion)
 	  time-step
 	  time-step-count))
 
-(defun get-weather-data (station-criterion &key api-key time-step time-step-count)
-  (let ((url (make-url api-key station-criterion time-step time-step-count)))
+(defun get-weather-data (station-criterion &key time-step time-step-count)
+  (let ((url (make-url station-criterion time-step time-step-count)))
     ;; (break url)
     (multiple-value-bind (response-body status-code headers uri stream must-close reason-phrase)
 	(drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8)
@@ -254,14 +253,13 @@
 
       (unless (= status-code 200)
 	(if (search "no locations found for place" response-body)
-	    (error 'no-stations-error
-		   :format-control "No stations for criterion ~A."
-		   :format-arguments (list station-criterion))
-	    (error 'remote-error
-		   :format-control "Remote returned an error: ~A (~A) with body '~%'."
-		   :format-arguments (list status-code reason-phrase response-body))))
+	    (error 'station-not-found-error :status-code status-code
+		   :reason (format nil "No locations found for ~A." station-criterion))
+	    (error 'remote-error :status-code status-code :reason reason-phrase
+		   :response-body response-body)))
 
       ;; (break response-body)
+
       (let ((dom (string-to-dom response-body)))
 	(list
 	 (extract-stations dom)
@@ -335,22 +333,17 @@
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun observations (station-criterion &key (time-step 30) (time-step-count 48) (api-key *api-key*))
+(defun observations (station-criterion &key (time-step 30) (time-step-count 48))
   (check-type station-criterion criterion)
   (check-type time-step number)
   (check-type time-step-count number)
 
-  (when (null api-key)
-    (error 'api-key-missing-error
-	   :format-control "API-key must be set."))
-  (check-type api-key string)
-
   (let* ((result (get-weather-data station-criterion
-				   :api-key api-key :time-step time-step :time-step-count time-step-count))
+				   :time-step time-step :time-step-count time-step-count))
 	 (weather-stations (first result)))
 
     (when (= (length weather-stations) 0)
-      (error 'no-stations-error
+      (error 'no-observations-for-station-error
 	     :format-control "No stations for criterion ~A."
 	     :format-arguments (list station-criterion)))
 
