@@ -1,5 +1,5 @@
 ;;;; -*- Mode: LISP; Syntax: COMMON-LISP; Package: FMI-OBSERVATIONS; Base: 10 -*-
-;;;; Copyright (c) 2013-2015, Atte Hinkka <atte.hinkka@iki.fi>
+;;;; Copyright (c) 2013-2019, Atte Hinkka <atte.hinkka@iki.fi>
 ;;;; 
 ;;;; Permission to use, copy, modify, and/or distribute this software for any
 ;;;; purpose with or without fee is hereby granted, provided that the above
@@ -50,8 +50,8 @@
    (station-fmi-id   :accessor station-fmi-id   :initarg :station-fmi-id)
    (station-location :accessor station-location :initarg :station-location)))
 
-(defgeneric criterion-as-get-parameter (criterion)
-  (:documentation "Generic method for turning search criteria into GET params."))
+(defgeneric criterion-as-pair (criterion)
+  (:documentation "Generic method for turning search criteria into applicable GET parameter pairs."))
 
 (define-condition fmi-observations-condition (condition)
   ()
@@ -133,8 +133,7 @@
 ;;;
 ;;; Domain
 ;;;
-(defparameter *observations-multipointcoverage-url*
-	      "http://opendata.fmi.fi/wfs?request=getFeature&storedquery_id=fmi::observations::weather::multipointcoverage&projection=epsg:4326")
+(defparameter *wfs-url* "http://opendata.fmi.fi/wfs")
 
 (defun extract-locations (dom)
   (let ((node-set
@@ -222,33 +221,37 @@
        #'(lambda (node) (xpath:evaluate "string()" node))
        node-set))))
 
-(defmethod criterion-as-get-parameter ((object place-name-criterion))
-  (format nil "place=~A" (drakma:url-encode (place-name object) :utf-8)))
+(defmethod criterion-as-pair ((object place-name-criterion))
+  (cons "place" (place-name object)))
 
-(defmethod criterion-as-get-parameter ((object bounding-box-criterion))
+(defmethod criterion-as-pair ((object bounding-box-criterion))
   (with-slots (bounding-box) object
     (with-slots (left-lower right-upper) bounding-box
-      (format nil "bbox=~A,~A,~A,~A"
-	      (x left-lower)
-	      (x right-upper)
-	      (y left-lower)
-	      (y right-upper)))))
+      (cons "bbox"
+            (format nil "~A,~A,~A,~A"
+                    (x left-lower)
+                    (y left-lower)
+                    (x right-upper)
+                    (y right-upper))))))
 
-(defmethod criterion-as-get-parameter ((object fmi-station-id-criterion))
-  (format nil "fmisid=~A" (drakma:url-encode (station-id object) :utf-8)))
+(defmethod criterion-as-pair ((object fmi-station-id-criterion))
+  (cons "fmisid" (station-id object)))
 
-(defun make-url (criterion time-step time-step-count)
-  (format nil "~A&~A&timestep=~A&timesteps=~A"
-	  *observations-multipointcoverage-url*
-	  (criterion-as-get-parameter criterion)
-	  time-step
-	  time-step-count))
+(defun make-parameters (criterion time-step)
+  (list
+   '("request" . "getFeature")
+   '("storedquery_id" . "fmi::observations::weather::multipointcoverage")
+   '("projection" . "epsg:4326")
+   (criterion-as-pair criterion)
+   (cons "timestep" (format nil "~A" time-step))))
 
-(defun get-weather-data (station-criterion &key time-step time-step-count)
-  (let ((url (make-url station-criterion time-step time-step-count)))
+(defun get-weather-data (station-criterion &key time-step)
+  (let ((url *wfs-url*)
+	(parameters (make-parameters station-criterion time-step)))
     ;; (break url)
+    ;; (break parameters)
     (multiple-value-bind (response-body status-code headers uri stream must-close reason-phrase)
-	(drakma:http-request url :external-format-out :utf-8 :external-format-in :utf-8)
+	(drakma:http-request url :parameters parameters :external-format-out :utf-8 :external-format-in :utf-8)
       (declare (ignore headers uri stream must-close))
 
       (unless (= status-code 200)
@@ -333,13 +336,11 @@
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun observations (station-criterion &key (time-step 30) (time-step-count 48))
+(defun observations (station-criterion &key (time-step 30))
   (check-type station-criterion criterion)
   (check-type time-step number)
-  (check-type time-step-count number)
 
-  (let* ((result (get-weather-data station-criterion
-				   :time-step time-step :time-step-count time-step-count))
+  (let* ((result (get-weather-data station-criterion :time-step time-step))
 	 (weather-stations (first result)))
 
     (when (= (length weather-stations) 0)
