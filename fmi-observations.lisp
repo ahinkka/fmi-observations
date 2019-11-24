@@ -341,7 +341,7 @@
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun observations (station-criterion &key (time-step 30)
+(defun observations (station-criterion &key (time-step 60)
 					 (start-time (local-time:timestamp- (local-time:now) 1 :hour))
 					 (end-time (local-time:now)))
   (check-type station-criterion criterion)
