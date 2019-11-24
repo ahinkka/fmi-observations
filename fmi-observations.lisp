@@ -269,7 +269,8 @@
 	 (extract-node-values dom "//gmlcov:positions")
 	 (extract-node-values dom "//gml:doubleOrNilReasonTupleList")
 	 (observation-fields dom)
-	 url)))))
+	 url
+	 parameters)))))
 
 (defun location-to-place-caches (dom)
   (flet
@@ -352,6 +353,7 @@
 	   (observations (car (third result)))
 	   (attributes (fourth result))
 	   (url (fifth result))
+	   (parameters (sixth result))
 
 	   (location-to-station (iterate (for station in weather-stations)
 					 (collect (cons (station-location station) station) into stations-alist)
@@ -360,4 +362,5 @@
        (sort
 	(collect-observations location-to-station locations-and-times observations attributes)
 	#'weather-observation-temporal-comparator)
-       url))))
+       url
+       parameters))))
