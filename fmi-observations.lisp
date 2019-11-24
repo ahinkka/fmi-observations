@@ -237,22 +237,26 @@
 (defmethod criterion-as-pair ((object fmi-station-id-criterion))
   (cons "fmisid" (station-id object)))
 
-(defun make-parameters (criterion time-step)
+(defun make-parameters (criterion time-step start-time end-time)
   (list
    '("request" . "getFeature")
    '("storedquery_id" . "fmi::observations::weather::multipointcoverage")
    '("projection" . "epsg:4326")
    (criterion-as-pair criterion)
-   (cons "timestep" (format nil "~A" time-step))))
+   (cons "timestep" (format nil "~A" time-step))
+   (cons "starttime" (local-time:format-timestring nil start-time :format +fmi-iso-format+))
+   (cons "endtime" (local-time:format-timestring nil end-time :format +fmi-iso-format+))))
 
-(defun get-weather-data (station-criterion &key time-step)
+(defun get-weather-data (station-criterion &key time-step start-time end-time)
   (let ((url *wfs-url*)
-	(parameters (make-parameters station-criterion time-step)))
+	(parameters (make-parameters station-criterion time-step start-time end-time)))
     ;; (break url)
     ;; (break parameters)
     (multiple-value-bind (response-body status-code headers uri stream must-close reason-phrase)
 	(drakma:http-request url :parameters parameters :external-format-out :utf-8 :external-format-in :utf-8)
       (declare (ignore headers uri stream must-close))
+
+      ;; (break response-body)
 
       (unless (= status-code 200)
 	(if (search "no locations found for place" response-body)
@@ -337,11 +341,15 @@
 (defun weather-observation-temporal-comparator (x y)
   (local-time:timestamp< (observation-time x) (observation-time y)))
 
-(defun observations (station-criterion &key (time-step 30))
+(defun observations (station-criterion &key (time-step 30)
+					 (start-time (local-time:timestamp- (local-time:now) 1 :hour))
+					 (end-time (local-time:now)))
   (check-type station-criterion criterion)
   (check-type time-step number)
+  (check-type start-time local-time:timestamp)
+  (check-type end-time local-time:timestamp)
 
-  (let* ((result (get-weather-data station-criterion :time-step time-step))
+  (let* ((result (get-weather-data station-criterion :time-step time-step :start-time start-time :end-time end-time))
 	 (weather-stations (first result)))
 
     (when (= (length weather-stations) 0)
