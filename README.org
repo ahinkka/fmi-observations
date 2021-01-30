@@ -5,7 +5,7 @@ See <http://ilmatieteenlaitos.fi/latauspalvelun-beta> for API details.
 
 The library only implements the
 =fmi::observations::weather::realtime::place::multipointcoverage= WFS
-interfacethat can be parameterized by timestep (in minutes), and a location
+interface that can be parameterized by timestep (in minutes), and a location
 station criterion (one of place name, station id or bounding box).
 
 License: MIT
